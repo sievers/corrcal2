@@ -1,6 +1,11 @@
 import numpy 
 import ctypes
 import time
+try:
+    import pyfof
+    have_fof=True
+except:
+    have_fof=False
 
 mylib=ctypes.cdll.LoadLibrary("libcorrcal2_funs.so")
 
@@ -279,6 +284,68 @@ def read_sparse(fname):
 
     mat=sparse_2level(diag,vecs,src,lims,isinv)
     return mat
+
+def grid_data(vis,u,v,noise,ant1,ant2,tol=0.1,do_fof=True):
+    """Re-order the data into redundant groups.  Inputs are (vis,u,v,noise,ant1,ant2,tol=0.1)
+    where tol is the UV-space distance for points to be considered redundant.  Data will be
+    reflected to have positive u, or positive v for u within tol of zero.  If pyfof is
+    available, use that for group finding."""
+    
+    ii=(v<0)|((v<tol)&(u<0))
+    tmp=ant1[ii]
+    ant1[ii]=ant2[ii]
+    ant2[ii]=tmp
+    vis[ii]=numpy.conj(vis[ii])
+    
+    if (have_fof & do_fof):
+        uv=numpy.stack([u,v]).transpose()
+        groups=pyfof.friends_of_friends(uv,tol)
+        myind=numpy.zeros(len(u))
+        #for i in numpy.arange(len(groups)):
+        for jj,group in enumerate(groups):
+            for i in range(len(group)):
+                myind[group[i]]=jj
+        ii=numpy.argsort(myind)
+        u=u[ii]
+        v=v[ii]
+        ant1=ant1[ii]
+        ant2=ant2[ii]
+        noise=noise[ii]
+        myind=myind[ii]
+        edges=numpy.where(numpy.diff(myind)!=0)[0]+1
+        edges=numpy.append(0,edges)
+        edges=numpy.append(edges,len(ant1))
+        return vis,u,v,noise,ant1,ant2,edges
+        #return vis,u,v,noise,ant1,ant2,myind
+        
+    else:
+        if (do_fof):
+            print "unable to access pyfof.  reverting to simple grid."
+        ii=numpy.argsort(u)
+        vis=vis[ii]
+        u=u[ii]
+        v=v[ii]
+        ant1=ant1[ii]
+        ant2=ant2[ii]
+        noise=noise[ii]
+    
+    #assume the first visibility is in the center of a cell.
+    #if tol is the expected spacing between redundant groups, then 
+    #this should be robust to small errors in dish location
+        ugrid= (u-u[0])/tol
+        ugrid=numpy.asarray(numpy.round(ugrid),dtype='int32')
+        
+        vgrid= (v-v[0])/tol
+        vgrid=numpy.asarray(numpy.round(vgrid),dtype='int32')
+        cgrid=ugrid+numpy.complex(0,1)*vgrid
+        
+        ii=numpy.argsort(cgrid)
+        mybreaks=numpy.where(numpy.diff(ii)!=0)
+        
+
+
+
+
 
 def mymatmul(a,b):
     n=a.shape[0]
