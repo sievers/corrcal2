@@ -153,6 +153,7 @@ def get_chisq(g,data,mat,ant1,ant2,scale_fac=1.0):
         print t2-t1
     sd=mycov_inv*data
     chisq=numpy.sum(sd*data)
+    print chisq
     return chisq
 
 def get_gradient(g,data,mat,ant1,ant2,scale_fac=1.0):
@@ -285,66 +286,56 @@ def read_sparse(fname):
     mat=sparse_2level(diag,vecs,src,lims,isinv)
     return mat
 
+def make_uv_grid(u,v,tol=0.01,do_fof=True):
+    isconj=(v<0)|((v<tol)&(u<0))
+    u=u.copy()
+    v=v.copy()
+    u[isconj]=-1*u[isconj]
+    v[isconj]=-1*v[isconj]
+    if (have_fof & do_fof):
+        uv=numpy.stack([u,v]).transpose()
+        groups=pyfof.friends_of_friends(uv,tol)
+        myind=numpy.zeros(len(u))
+        
+        for j,mygroup in enumerate(groups):
+            myind[mygroup]=j
+        ii=numpy.argsort(myind)
+        edges=numpy.where(numpy.diff(myind[ii])!=0)[0]+1
+    else:
+        #break up uv plane into tol-sized blocks
+        u_int=numpy.round(u/tol)
+        v_int=numpy.round(v/tol)
+        uv=u_int+numpy.complex(0,1)*v_int
+        ii=numpy.argsort(uv)
+        uv_sort=uv[ii]
+        edges=numpy.where(numpy.diff(uv_sort)!=0)[0]+1
+    edges=numpy.append(0,edges)
+    edges=numpy.append(edges,len(uv_sort))
+    
+    #map isconj into post-sorting indexing
+    isconj=isconj[ii]
+    return ii,edges,isconj
+
+
 def grid_data(vis,u,v,noise,ant1,ant2,tol=0.1,do_fof=True):
     """Re-order the data into redundant groups.  Inputs are (vis,u,v,noise,ant1,ant2,tol=0.1)
     where tol is the UV-space distance for points to be considered redundant.  Data will be
     reflected to have positive u, or positive v for u within tol of zero.  If pyfof is
     available, use that for group finding."""
-    
-    ii=(v<0)|((v<tol)&(u<0))
-    tmp=ant1[ii]
-    ant1[ii]=ant2[ii]
-    ant2[ii]=tmp
-    vis[ii]=numpy.conj(vis[ii])
-    
-    if (have_fof & do_fof):
-        uv=numpy.stack([u,v]).transpose()
-        groups=pyfof.friends_of_friends(uv,tol)
-        myind=numpy.zeros(len(u))
-        #for i in numpy.arange(len(groups)):
-        for jj,group in enumerate(groups):
-            for i in range(len(group)):
-                myind[group[i]]=jj
-        ii=numpy.argsort(myind)
-        u=u[ii]
-        v=v[ii]
-        ant1=ant1[ii]
-        ant2=ant2[ii]
-        noise=noise[ii]
-        myind=myind[ii]
-        edges=numpy.where(numpy.diff(myind)!=0)[0]+1
-        edges=numpy.append(0,edges)
-        edges=numpy.append(edges,len(ant1))
-        return vis,u,v,noise,ant1,ant2,edges
-        #return vis,u,v,noise,ant1,ant2,myind
-        
-    else:
-        if (do_fof):
-            print "unable to access pyfof.  reverting to simple grid."
-        ii=numpy.argsort(u)
-        vis=vis[ii]
-        u=u[ii]
-        v=v[ii]
-        ant1=ant1[ii]
-        ant2=ant2[ii]
-        noise=noise[ii]
-    
-    #assume the first visibility is in the center of a cell.
-    #if tol is the expected spacing between redundant groups, then 
-    #this should be robust to small errors in dish location
-        ugrid= (u-u[0])/tol
-        ugrid=numpy.asarray(numpy.round(ugrid),dtype='int32')
-        
-        vgrid= (v-v[0])/tol
-        vgrid=numpy.asarray(numpy.round(vgrid),dtype='int32')
-        cgrid=ugrid+numpy.complex(0,1)*vgrid
-        
-        ii=numpy.argsort(cgrid)
-        mybreaks=numpy.where(numpy.diff(ii)!=0)
-        
+
+    ii,edges,isconj=make_uv_grid(u,v,tol,do_fof)
+    tmp=ant1[isconj]
+    ant1[isconj]=ant2[isconj]
+    ant2[isconj]=tmp
+    vis=vis[ii]
+    vis[isconj]=numpy.conj(vis[isconj])
+
+    ant1=ant1[ii]
+    ant2=ant2[ii]
+    noise=noise[ii]
 
 
-
+    return vis,u,v,noise,ant1,ant2,edges,ii,isconj
 
 
 def mymatmul(a,b):
