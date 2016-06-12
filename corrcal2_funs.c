@@ -98,6 +98,25 @@ void mult_vecs_by_blocs(double *vecs, double *blocks, int n, int nvec, int nbloc
     //vecs+edges[i],n,blocks+nvec*nvec*i,nvec,edges[i+1]-edges[i],nvec,nvec,ans+edges[i],n);
   }
 }
+
+/*--------------------------------------------------------------------------------*/
+void apply_gains_to_mat_dense(double *mat, complex double *gains, long *ant1, long *ant2, int n, int nvec)
+{
+  complex double *gvec=(double complex *)malloc(sizeof(double complex)*n/2);
+  for (int i=0;i<n/2;i++) {
+    gvec[i]=(gains[ant1[i]])*conj(gains[ant2[i]]);
+  }
+
+  for (int j=0;j<nvec;j++){
+    for (int i=0;i<n/2;i++) {
+      complex double tmp=mat[j*n+2*i]+_Complex_I*mat[j*n+2*i+1];
+      tmp=gvec[i]*tmp;
+      mat[j*n+2*i]=creal(tmp);
+      mat[j*n+2*i+1]=cimag(tmp);
+    }
+  }
+  free(gvec);
+}
 /*--------------------------------------------------------------------------------*/
 void apply_gains_to_mat(complex double *mat, complex double *gains, long *ant1, long *ant2, int n, int nvec)
 {

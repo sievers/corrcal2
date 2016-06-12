@@ -43,6 +43,11 @@ mult_vecs_by_blocs_c.argtypes=[ctypes.c_void_p,ctypes.c_void_p,ctypes.c_int,ctyp
 apply_gains_to_mat_c=mylib.apply_gains_to_mat
 apply_gains_to_mat_c.argtypes=[ctypes.c_void_p,ctypes.c_void_p,ctypes.c_void_p,ctypes.c_void_p,ctypes.c_int,ctypes.c_int]
 
+apply_gains_to_mat_dense_c=mylib.apply_gains_to_mat_dense
+apply_gains_to_mat_dense_c.argtypes=[ctypes.c_void_p,ctypes.c_void_p,ctypes.c_void_p,ctypes.c_void_p,ctypes.c_int,ctypes.c_int]
+
+
+
 sum_grads_c=mylib.sum_grads
 sum_grads_c.argtypes=[ctypes.c_void_p,ctypes.c_void_p,ctypes.c_void_p,ctypes.c_void_p,ctypes.c_int]
 
@@ -137,54 +142,61 @@ class sparse_2level:
         apply_gains_to_mat_c(self.src.ctypes.data,g.ctypes.data,ant1.ctypes.data,ant2.ctypes.data,self.src.shape[1]/2,self.src.shape[0])
 
 
-def get_chisq(g,data,mat,ant1,ant2,scale_fac=1.0):
+
+def get_chisq_dense(g,data,noise,sig,ant1,ant2,scale_fac=1.0,normfac=1.0):
     g=g/scale_fac
-    do_times=False
-    if do_times:
-        t1=time.time()
-    mycov=mat.copy()
-    mycov.apply_gains_to_mat(g,ant1,ant2)
-    if do_times:
-        t2=time.time();
-        print t2-t1    
-    mycov_inv=mycov.inv()
-    if do_times:
-        t2=time.time();
-        print t2-t1
-    sd=mycov_inv*data
-    chisq=numpy.sum(sd*data)
-    print chisq
+    cov=sig.copy()
+    n=sig.shape[0]
+    assert(sig.shape[1]==n)
+
+    apply_gains_to_mat_c(cov.ctypes.data,g.ctypes.data,ant1.ctypes.data,ant2.ctypes.data,n/2,n)
+
+    cov=cov.transpose().copy()
+    apply_gains_to_mat_c(cov.ctypes.data,g.ctypes.data,ant1.ctypes.data,ant2.ctypes.data,n/2,n)
+
+    cov=cov.transpose().copy()
+    cov=cov+noise
+    cov=0.5*(cov+cov.transpose())
+    cov_inv=numpy.linalg.inv(cov)
+    rhs=numpy.dot(cov_inv,data)
+    chisq=numpy.sum(data*numpy.asarray(rhs))
+    nn=g.size/2
+    chisq=chisq+normfac*( (numpy.sum(g[1::2]))**2 + (numpy.sum(g[0::2])-nn)**2)
+    print chisq, numpy.mean(g[0::2]),numpy.mean(g[1::2])
     return chisq
-
-def get_gradient(g,data,mat,ant1,ant2,scale_fac=1.0):
-    g=g/scale_fac
+def get_gradient_dense(g,data,noise,sig,ant1,ant2,scale_fac=1.0,normfac=1.0):
     do_times=False
-    if do_times:
-        t1=time.time()
-    mycov=mat.copy()
-    mycov.apply_gains_to_mat(g,ant1,ant2)
-    if do_times:
-        t2=time.time();
-        print t2-t1
-    mycov_inv=mycov.inv()
-    if do_times:
-        t2=time.time();
-        print t2-t1
-    sd=mycov_inv*data
-    gsd=sd.copy();
-    apply_gains_to_mat_c(gsd.ctypes.data,g.ctypes.data,ant2.ctypes.data,ant1.ctypes.data,gsd.size/2,1);
-    tmp=mat.copy()
-    tmp.diag[:]=0
-    cgsd=tmp*gsd
+    g=g/scale_fac
+    cov=sig.copy()
+    n=sig.shape[0]
+    apply_gains_to_mat_c(cov.ctypes.data,g.ctypes.data,ant1.ctypes.data,ant2.ctypes.data,n/2,n)
+    cov=cov.transpose().copy()
+    apply_gains_to_mat_c(cov.ctypes.data,g.ctypes.data,ant1.ctypes.data,ant2.ctypes.data,n/2,n)
+    cov=cov+noise
+    cov=0.5*(cov+cov.transpose())
+    cov_inv=numpy.linalg.inv(cov)
+    sd=numpy.dot(cov_inv,data)
+    
+    #make g*(c_inv)*d
+    gsd=sd.copy()
+    apply_gains_to_mat_c(gsd.ctypes.data,g.ctypes.data,ant2.ctypes.data,ant1.ctypes.data,n/2,1)
 
-    if do_times:
-        t2=time.time();
-        print t2-t1
+    cgsd=numpy.dot(gsd,sig)
+
+    tmp=cgsd.copy()
+    cgsd=numpy.zeros(tmp.size)
+    cgsd[:]=tmp[:]
+
+    tmp=sd.copy()
+    sd=numpy.zeros(tmp.size)
+    sd[:]=tmp[:]
+
+    tmp=gsd.copy()
+    gsd=numpy.zeros(tmp.size)
+    gsd[:]=tmp[:]
 
     nant=numpy.max([numpy.max(ant1),numpy.max(ant2)])+1
     grad=numpy.zeros(2*nant)
-
-
 
     r1=g[2*ant1]
     r2=g[2*ant2]
@@ -194,7 +206,6 @@ def get_gradient(g,data,mat,ant1,ant2,scale_fac=1.0):
     m1i_v2=0*cgsd
     m2r_v2=0*cgsd
     m2i_v2=0*cgsd
-
     
     m1r_v2[0::2]=r2*sd[0::2]-i2*sd[1::2];
     m1r_v2[1::2]=i2*sd[0::2]+r2*sd[1::2];
@@ -227,7 +238,119 @@ def get_gradient(g,data,mat,ant1,ant2,scale_fac=1.0):
         print t2-t1
     #chisq=numpy.sum(sd*data)
     #print chisq
-    return -2*grad/scale_fac
+
+
+    nn=g.size/2.0
+    grad_real=2*(numpy.sum(g[0::2])-nn)/nn
+    grad_im=2*numpy.sum(g[1::2])
+
+
+
+    return -2*grad/scale_fac + normfac*(grad_real+grad_im)/scale_fac
+
+
+
+
+def get_chisq(g,data,mat,ant1,ant2,scale_fac=1.0,normfac=1.0):
+    g=g/scale_fac
+    do_times=False
+    if do_times:
+        t1=time.time()
+    mycov=mat.copy()
+    mycov.apply_gains_to_mat(g,ant1,ant2)
+    if do_times:
+        t2=time.time();
+        print t2-t1    
+    mycov_inv=mycov.inv()
+    if do_times:
+        t2=time.time();
+        print t2-t1
+    sd=mycov_inv*data
+    chisq=numpy.sum(sd*data)
+    nn=g.size/2
+    chisq=chisq+normfac*( (numpy.sum(g[1::2]))**2 + (numpy.sum(g[0::2])-nn)**2)
+    
+
+    print chisq
+    return chisq
+
+def get_gradient(g,data,mat,ant1,ant2,scale_fac=1.0,normfac=1.0):
+    g=g/scale_fac
+    do_times=False
+    if do_times:
+        t1=time.time()
+    mycov=mat.copy()
+    mycov.apply_gains_to_mat(g,ant1,ant2)
+    if do_times:
+        t2=time.time();
+        print t2-t1
+    mycov_inv=mycov.inv()
+    if do_times:
+        t2=time.time();
+        print t2-t1
+    sd=mycov_inv*data
+    gsd=sd.copy();
+    apply_gains_to_mat_c(gsd.ctypes.data,g.ctypes.data,ant2.ctypes.data,ant1.ctypes.data,gsd.size/2,1);
+    tmp=mat.copy()
+    tmp.diag[:]=0
+    cgsd=tmp*gsd
+
+    if do_times:
+        t2=time.time();
+        print t2-t1
+
+    nant=numpy.max([numpy.max(ant1),numpy.max(ant2)])+1
+    grad=numpy.zeros(2*nant)
+
+    r1=g[2*ant1]
+    r2=g[2*ant2]
+    i1=g[2*ant1+1]
+    i2=g[2*ant2+1]
+    m1r_v2=0*cgsd
+    m1i_v2=0*cgsd
+    m2r_v2=0*cgsd
+    m2i_v2=0*cgsd
+    
+    m1r_v2[0::2]=r2*sd[0::2]-i2*sd[1::2];
+    m1r_v2[1::2]=i2*sd[0::2]+r2*sd[1::2];
+    m1i_v2[0::2]=i2*sd[0::2]+r2*sd[1::2];
+    m1i_v2[1::2]=-r2*sd[0::2]+i2*sd[1::2];
+    m2r_v2[0::2]=r1*sd[0::2]+i1*sd[1::2];
+    m2r_v2[1::2]=-i1*sd[0::2]+r1*sd[1::2];
+    m2i_v2[0::2]=i1*sd[0::2]-r1*sd[1::2];
+    m2i_v2[1::2]=r1*sd[0::2]+i1*sd[1::2];
+
+
+    if do_times:
+        t2=time.time();
+        print t2-t1
+
+    v1_m1r_v2=cgsd*m1r_v2;v1_m1r_v2=v1_m1r_v2[0::2]+v1_m1r_v2[1::2];
+    v1_m1i_v2=cgsd*m1i_v2;v1_m1i_v2=v1_m1i_v2[0::2]+v1_m1i_v2[1::2];
+    v1_m2r_v2=cgsd*m2r_v2;v1_m2r_v2=v1_m2r_v2[0::2]+v1_m2r_v2[1::2];
+    v1_m2i_v2=cgsd*m2i_v2;v1_m2i_v2=v1_m2i_v2[0::2]+v1_m2i_v2[1::2];
+    if do_times:
+        t2=time.time();
+        print t2-t1
+
+    #print v1_m1r_v2[0:5]
+
+    sum_grads_c(grad.ctypes.data,v1_m1r_v2.ctypes.data,v1_m1i_v2.ctypes.data,ant1.ctypes.data,v1_m2i_v2.size)
+    sum_grads_c(grad.ctypes.data,v1_m2r_v2.ctypes.data,v1_m2i_v2.ctypes.data,ant2.ctypes.data,v1_m2i_v2.size)
+    if do_times:
+        t2=time.time();
+        print t2-t1
+    #chisq=numpy.sum(sd*data)
+    #print chisq
+
+
+
+    nn=g.size/2.0
+    grad_real=2*(numpy.sum(g[0::2])-nn)/nn
+    grad_im=2*numpy.sum(g[1::2])
+    return -2*grad/scale_fac + normfac*(grad_real+grad_im)/scale_fac
+
+    #return -2*grad/scale_fac
 
 
 
@@ -295,8 +418,7 @@ def make_uv_grid(u,v,tol=0.01,do_fof=True):
     if (have_fof & do_fof):
         uv=numpy.stack([u,v]).transpose()
         groups=pyfof.friends_of_friends(uv,tol)
-        myind=numpy.zeros(len(u))
-        
+        myind=numpy.zeros(len(u))    
         for j,mygroup in enumerate(groups):
             myind[mygroup]=j
         ii=numpy.argsort(myind)
@@ -310,7 +432,7 @@ def make_uv_grid(u,v,tol=0.01,do_fof=True):
         uv_sort=uv[ii]
         edges=numpy.where(numpy.diff(uv_sort)!=0)[0]+1
     edges=numpy.append(0,edges)
-    edges=numpy.append(edges,len(uv_sort))
+    edges=numpy.append(edges,len(u))
     
     #map isconj into post-sorting indexing
     isconj=isconj[ii]
@@ -357,3 +479,64 @@ def mult_vecs_by_blocks(vecs,blocks,edges):
         edges.numpy.asarray(edges,dtype='int64')
     mult_vecs_by_blocs_c(vecs.ctypes.data,blocks.ctypes.data,n,nvec,nblock,edges.ctypes.data,ans.ctypes.data)
     return ans
+
+def make_uv_from_antpos(xyz,rmax=0,tol=0.0):
+    """Take a list of antenna positions and create a UV snapshot out of it."""
+    xyz=xyz.copy()
+    nant=xyz.shape[0]
+    if xyz.shape[1]==2:
+        xyz=numpy.c_[xyz,numpy.zeros(nant)]
+    mymed=numpy.median(xyz,axis=0)
+    xyz=xyz-numpy.repeat([mymed],nant,axis=0)
+    
+    if (rmax>0):
+        r=numpy.sqrt(numpy.sum(xyz**2,axis=1))
+        xyz=xyz[r<=rmax,:]
+        nant=xyz.shape[0]
+
+    #fit to a plane by modelling z=a*x+b*y+c
+    mat=numpy.c_[xyz[:,0:2],numpy.ones(nant)]
+    lhs=numpy.dot(mat.transpose(),mat)
+    rhs=numpy.dot(mat.transpose(),xyz[:,2])
+    fitp=numpy.dot(numpy.linalg.inv(lhs),rhs)
+    
+    
+    #now rotate into that plane.  z should now be vertical axis
+    vz=numpy.dot(fitp,[1.0,0,0])
+    vvec=numpy.asarray([1,0,vz])
+    vvec=vvec/numpy.linalg.norm(vvec)
+    uz=numpy.dot(fitp,[0,1.0,0])
+    uvec=numpy.asarray([0,1,uz])
+    uvec=uvec/numpy.linalg.norm(uvec)
+    wvec=numpy.cross(uvec,vvec)
+    rotmat=numpy.vstack([uvec,vvec,wvec]).transpose()
+    xyz=numpy.dot(xyz,rotmat)
+    
+    x=xyz[:,0].copy()
+    xmat=numpy.repeat([x],nant,axis=0)
+    y=xyz[:,1].copy()
+    ymat=numpy.repeat([y],nant,axis=0)
+    antvec=numpy.arange(nant)
+
+    ant1=numpy.repeat([antvec],nant,axis=0)
+    ant2=ant1.copy().transpose()
+    
+    u=xmat-xmat.transpose()
+    v=ymat-ymat.transpose()
+    u=numpy.tril(u)
+    v=numpy.tril(v)
+
+    ii=(numpy.abs(u)>0)&(numpy.abs(v)>0)
+    u=u[ii]
+    v=v[ii]
+    ant1=ant1[ii]
+    ant2=ant2[ii]
+
+    ii=(u<0)|((u<tol)&(v<0))
+    tmp=ant1[ii]
+    ant1[ii]=ant2[ii]
+    ant2[ii]=tmp
+    u[ii]=u[ii]*-1
+    v[ii]=v[ii]*-1
+
+    return u,v,ant1,ant2,xyz
