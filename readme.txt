@@ -36,5 +36,8 @@ matrix to go non-positive definite.  If you hit this, you can set a
 scale factor to some large number until the minimizer behaves.  Look
 in corrcal2_example.py (which runs a whole PAPER-sized problem) to see
 how this works.
+<<<<<<< HEAD
 
 
+=======
+>>>>>>> cae43e04589df767c3d872c7aa07e862335f2c6b

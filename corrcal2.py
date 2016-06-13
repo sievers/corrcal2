@@ -47,7 +47,6 @@ apply_gains_to_mat_dense_c=mylib.apply_gains_to_mat_dense
 apply_gains_to_mat_dense_c.argtypes=[ctypes.c_void_p,ctypes.c_void_p,ctypes.c_void_p,ctypes.c_void_p,ctypes.c_int,ctypes.c_int]
 
 
-
 sum_grads_c=mylib.sum_grads
 sum_grads_c.argtypes=[ctypes.c_void_p,ctypes.c_void_p,ctypes.c_void_p,ctypes.c_void_p,ctypes.c_int]
 
@@ -140,7 +139,6 @@ class sparse_2level:
         
         apply_gains_to_mat_c(self.vecs.ctypes.data,g.ctypes.data,ant1.ctypes.data,ant2.ctypes.data,self.vecs.shape[1]/2,self.vecs.shape[0])
         apply_gains_to_mat_c(self.src.ctypes.data,g.ctypes.data,ant1.ctypes.data,ant2.ctypes.data,self.src.shape[1]/2,self.src.shape[0])
-
 
 
 def get_chisq_dense(g,data,noise,sig,ant1,ant2,scale_fac=1.0,normfac=1.0):
@@ -267,6 +265,7 @@ def get_chisq(g,data,mat,ant1,ant2,scale_fac=1.0,normfac=1.0):
         print t2-t1
     sd=mycov_inv*data
     chisq=numpy.sum(sd*data)
+
     nn=g.size/2
     chisq=chisq+normfac*( (numpy.sum(g[1::2]))**2 + (numpy.sum(g[0::2])-nn)**2)
     
@@ -349,10 +348,7 @@ def get_gradient(g,data,mat,ant1,ant2,scale_fac=1.0,normfac=1.0):
     grad_real=2*(numpy.sum(g[0::2])-nn)/nn
     grad_im=2*numpy.sum(g[1::2])
     return -2*grad/scale_fac + normfac*(grad_real+grad_im)/scale_fac
-
     #return -2*grad/scale_fac
-
-
 
 def chol(mat):
     n=mat.shape[0]
@@ -418,7 +414,7 @@ def make_uv_grid(u,v,tol=0.01,do_fof=True):
     if (have_fof & do_fof):
         uv=numpy.stack([u,v]).transpose()
         groups=pyfof.friends_of_friends(uv,tol)
-        myind=numpy.zeros(len(u))    
+        myind=numpy.zeros(len(u))
         for j,mygroup in enumerate(groups):
             myind[mygroup]=j
         ii=numpy.argsort(myind)
